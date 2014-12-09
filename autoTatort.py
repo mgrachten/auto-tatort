@@ -5,6 +5,8 @@ import datetime
 import urlparse
 from urllib import urlopen, urlretrieve
 import json
+import re
+from HTMLParser import HTMLParser
 
 #Wrap sysout so we don't run into problems when printing unicode characters to the console.
 #This would otherwise be a problem when we are invoked on Debian using cron: 
@@ -33,7 +35,51 @@ items = feed.entries
 
 today = datetime.date.today()
 
+unescape = HTMLParser().unescape
+
+def xml2srt(in_fn, out_fn):
+   """
+   Convert xml subtitle file `in_fn` to srt format and write to `out_fn`.
+
+   Note 1: the (apparently constant) offset of 10 hours is ignored
+
+   Note 2: the .srt file is UTF8 encoded. This may not be detected
+   correctly by all media players. For example `mplayer` needs the
+   option "-subcp utf8" in order to display the subtitles correctly
+
+   """
+
+   encoding = 'utf8'
+
+   lines = open(in_fn).readlines()
+
+   subtitle_pat = re.compile(('.*<p id="subtitle[0-9]+" '
+                              'begin="(?P<begin>[0-9]+:[0-9]+:[0-9]+.[0-9]+)" '
+                              'end="(?P<end>[0-9]+:[0-9]+:[0-9]+.[0-9]+)" '
+                              'tts:textAlign="center" '
+                              'style="s[0-9]">(?P<text>.*)</p>.*'))
+
+   tag_pat = re.compile('<[^>]+>')
+
+   with open(out_fn, 'w') as f:
+
+      i = 1
+      for l in lines:
+
+         m = subtitle_pat.search(l)
+
+         if m is not None:
+
+            d = m.groupdict()
+            begin = '0' + d['begin'].replace('.', ',')[1:]
+            end = '0' + d['end'].replace('.', ',')[1:]
+            text = tag_pat.sub('', d['text'].replace('<br />','\n'))
+            f.write(u'{0}\n{1} --> {2}\n{3}\n\n'
+                    .format(i, begin, end, unescape(text)).encode(encoding))
+            i += 1
+
 for item in items:
+
    year = item["date_parsed"][0];
    month = item["date_parsed"][1];
    day = item["date_parsed"][2];
@@ -80,9 +126,15 @@ for item in items:
                  offset = media["_subtitleOffset"]
 
                 subtitleURL = 'http://www.ardmediathek.de/' + media["_subtitleUrl"]
-                urlretrieve(subtitleURL, TARGET_DIR + fileName + "_subtitleOffset_" + str(offset) + ".xml")
+                subtitleXML = TARGET_DIR + fileName + "_subtitleOffset_" + str(offset) + ".xml"
+                subtitleSRT = TARGET_DIR + fileName + ".srt"
+
+                urlretrieve(subtitleURL, subtitleXML)
+
+                # convert xml subtitles to srt format
+                xml2srt(subtitleXML, subtitleSRT)
+
             except Exception as e:
               #print and resume with download
               print e
               print subtitleURL
-
